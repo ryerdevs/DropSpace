@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { QRCodeSVG } from 'qrcode.react';
-import { Copy, Check, ExternalLink, QrCode, MonitorSmartphone, Laptop, Smartphone, Trash2, Send, Paperclip, File, Image as ImageIcon, Download, FileText, FileArchive, FileVideo, FileAudio, FileCode, X, Search, ChevronRight, Github, Linkedin, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Copy, Check, ExternalLink, QrCode, MonitorSmartphone, Laptop, Smartphone, Trash2, Send, Paperclip, File, Image as ImageIcon, Download, FileText, FileArchive, FileVideo, FileAudio, FileCode, X, Search, ChevronRight, Github, Linkedin, AlertCircle, ShieldCheck, Link } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WebRTCManager } from './lib/webrtc';
 
@@ -59,6 +59,10 @@ export default function App() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingLinks, setPendingLinks] = useState<string[]>([]);
   const [sentItems, setSentItems] = useState<SentItem[]>([]);
+  
+  // Send Panel State moved up to prevent unmounting
+  const [isDragging, setIsDragging] = useState(false);
+  const [activeSendTab, setActiveSendTab] = useState<'files' | 'links'>('files');
 
   const [status, setStatus] = useState<'waiting' | 'connected'>('waiting');
   const [sendStatus, setSendStatus] = useState<string | null>(null);
@@ -96,6 +100,87 @@ export default function App() {
       setErrorStatus(null);
     }, 4000);
   };
+
+  // --- Demo Automator ---
+  useEffect(() => {
+    const isDemo = new URLSearchParams(window.location.search).get('demo') === '1';
+    if (!isDemo || isMobile) return;
+
+    let isCancelled = false;
+
+    const runDemo = async () => {
+      const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+      
+      // 1. Initial wait showing QR
+      await wait(3000);
+      if (isCancelled) return;
+
+      // 2. Simulate mobile connection magically
+      setStatus('connected');
+      
+      // 3. Wait a moment then receive photos from mobile
+      await wait(1800);
+      if (isCancelled) return;
+      
+      const receiveImage = (title: string, color1: string, color2: string) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 800; canvas.height = 600;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const gradient = ctx.createLinearGradient(0, 0, 800, 600);
+          gradient.addColorStop(0, color1);
+          gradient.addColorStop(1, color2);
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, 800, 600);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 50px sans-serif';
+          ctx.fillText('Photo', 320, 310);
+        }
+        canvas.toBlob((blob) => {
+          if (blob) {
+            blob.arrayBuffer().then(buffer => {
+              if (isCancelled) return;
+              setMobileToDesktopFiles(prev => [...prev, {
+                fileName: title,
+                fileType: "image/jpeg",
+                fileData: buffer,
+                receivedAt: Date.now()
+              }]);
+            });
+          }
+        }, 'image/jpeg');
+      };
+
+      receiveImage("IMG_0941.jpg", "#3b82f6", "#8b5cf6");
+      
+      await wait(1200);
+      if (isCancelled) return;
+      
+      receiveImage("IMG_0942.jpg", "#ec4899", "#f43f5e");
+      
+      await wait(1500);
+      if (isCancelled) return;
+
+      // 4. Simulate a link being sent from mobile
+      setMobileToDesktopTabs(prev => [...prev, "https://github.com/ryerdevs", "https://wikipedia.org", "https://figma.com"]);
+      
+      await wait(3500);
+      if (isCancelled) return;
+      
+      // Restart loop
+      setStatus('waiting');
+      setMobileToDesktopFiles([]);
+      setMobileToDesktopTabs([]);
+      setSentItems([]);
+      runDemo();
+    };
+
+    runDemo();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isMobile]);
 
   // Initialize socket and connection
   useEffect(() => {
@@ -272,6 +357,22 @@ export default function App() {
     }
   };
 
+  const removeReceivedTab = (tabUrl: string) => {
+    if (isMobile) {
+      setDesktopToMobileTabs(prev => prev.filter(t => t !== tabUrl));
+    } else {
+      setMobileToDesktopTabs(prev => prev.filter(t => t !== tabUrl));
+    }
+  };
+
+  const removeReceivedFile = (fileReceivedAt: number) => {
+    if (isMobile) {
+      setDesktopToMobileFiles(prev => prev.filter(f => f.receivedAt !== fileReceivedAt));
+    } else {
+      setMobileToDesktopFiles(prev => prev.filter(f => f.receivedAt !== fileReceivedAt));
+    }
+  };
+
   const openAllTabs = () => {
     const tabsToOpen = isMobile ? desktopToMobileTabs : mobileToDesktopTabs;
     tabsToOpen.forEach(tab => {
@@ -297,13 +398,13 @@ export default function App() {
   const receiveTabsList = isMobile ? [...desktopToMobileTabs] : [...mobileToDesktopTabs];
   const receiveFilesList = isMobile ? [...desktopToMobileFiles] : [...mobileToDesktopFiles];
   
-  const TabList = () => {
+  const renderTabList = () => {
     const imagesList = receiveFilesList.filter(f => f.fileType.startsWith('image/'));
     const docsList = receiveFilesList.filter(f => !f.fileType.startsWith('image/'));
 
     return (
-    <div className="flex-1 flex flex-col min-h-0 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden h-full">
-      <div className="p-6 border-b border-gray-50 flex items-center justify-between">
+    <div className="flex-1 flex flex-col min-h-0 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden w-full h-full">
+      <div className="p-6 border-b border-gray-50 flex items-center justify-between shrink-0">
         <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
           {isMobile ? <Laptop className="w-5 h-5 text-gray-400" /> : <Smartphone className="w-5 h-5 text-gray-400" />}
           Received Files & Links
@@ -313,14 +414,21 @@ export default function App() {
             </span>
           )}
         </h2>
-        {(receiveTabsList.length > 0 || receiveFilesList.length > 0) && (
-          <button onClick={clearReceivedTabs} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors" title="Clear received items">
-            <Trash2 className="w-4 h-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {receiveTabsList.length > 0 && (
+            <button onClick={openAllTabs} className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors" title="Open all links">
+              <ExternalLink className="w-4 h-4" />
+            </button>
+          )}
+          {(receiveTabsList.length > 0 || receiveFilesList.length > 0) && (
+            <button onClick={clearReceivedTabs} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors" title="Clear received items">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-gray-50/50">
+      <div className="flex-1 overflow-y-auto min-h-0 p-4 custom-scrollbar bg-gray-50/50">
         <AnimatePresence initial={false}>
           {receiveTabsList.length === 0 && receiveFilesList.length === 0 ? (
             <motion.div 
@@ -357,29 +465,34 @@ export default function App() {
                         exit={{ opacity: 0, scale: 0.95 }}
                         transition={{ duration: 0.2 }}
                       >
-                        <a 
-                          href={tab} 
-                          target="_blank" 
-                          rel="noreferrer"
-                          className="flex items-center gap-3 p-3 bg-white rounded-2xl hover:shadow-md border border-gray-100 transition-all group"
-                        >
-                          <div className="w-10 h-10 rounded-xl bg-gray-50 flex flex-shrink-0 items-center justify-center overflow-hidden border border-gray-100 p-2">
-                            {hostname ? (
-                              <img 
-                                src={`https://www.google.com/s2/favicons?domain=${hostname}&sz=64`} 
-                                alt={hostname}
-                                className="w-full h-full object-contain"
-                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                              />
-                            ) : (
-                              <ExternalLink className="w-5 h-5 text-gray-400" />
-                            )}
-                          </div>
-                          <div className="overflow-hidden flex-1">
-                            <p className="text-sm font-semibold text-gray-900 truncate pr-2">{displayUrl}</p>
-                            <p className="text-xs text-gray-500 truncate pr-2">{tab}</p>
-                          </div>
-                        </a>
+                        <div className="flex items-center gap-3 p-3 bg-white rounded-2xl hover:shadow-md border border-gray-100 transition-all group relative">
+                          <a 
+                            href={tab} 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="flex items-center gap-3 flex-1 overflow-hidden pr-6"
+                          >
+                            <div className="w-10 h-10 rounded-xl bg-gray-50 flex flex-shrink-0 items-center justify-center overflow-hidden border border-gray-100 p-2">
+                              {hostname ? (
+                                <img 
+                                  src={`https://www.google.com/s2/favicons?domain=${hostname}&sz=64`} 
+                                  alt={hostname}
+                                  className="w-full h-full object-contain"
+                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                />
+                              ) : (
+                                <ExternalLink className="w-5 h-5 text-gray-400" />
+                              )}
+                            </div>
+                            <div className="overflow-hidden flex-1">
+                              <p className="text-sm font-semibold text-gray-900 truncate pr-2">{displayUrl}</p>
+                              <p className="text-xs text-gray-500 truncate pr-2">{tab}</p>
+                            </div>
+                          </a>
+                          <button onClick={() => removeReceivedTab(tab)} className="p-2 text-gray-400 hover:text-red-500 rounded-xl transition-colors opacity-100 lg:opacity-0 lg:group-hover:opacity-100 absolute right-2 bg-white" title="Remove link">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </motion.div>
                     );
                   })}
@@ -402,7 +515,7 @@ export default function App() {
                         exit={{ opacity: 0, scale: 0.95 }}
                         transition={{ duration: 0.2 }}
                       >
-                        <div className="flex items-center gap-3 p-3 bg-white rounded-2xl hover:shadow-md border border-gray-100 transition-all group">
+                        <div className="flex items-center gap-3 p-3 bg-white rounded-2xl hover:shadow-md border border-gray-100 transition-all group relative pr-12">
                           <button 
                             onClick={() => setSelectedImage({ url: blobUrl, name: file.fileName })}
                             className="w-14 h-14 rounded-xl bg-gray-50 flex flex-shrink-0 items-center justify-center overflow-hidden border border-gray-100 p-0 hover:opacity-80 transition-opacity cursor-pointer aspect-square"
@@ -415,6 +528,9 @@ export default function App() {
                           </div>
                           <button onClick={() => downloadFile(file)} className="p-2 text-blue-600 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors shrink-0">
                             <Download className="w-5 h-5" />
+                          </button>
+                          <button onClick={() => removeReceivedFile(file.receivedAt)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg transition-colors opacity-100 lg:opacity-0 lg:group-hover:opacity-100 absolute top-2 right-2 bg-white" title="Remove file">
+                            <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </motion.div>
@@ -436,7 +552,7 @@ export default function App() {
                         exit={{ opacity: 0, scale: 0.95 }}
                         transition={{ duration: 0.2 }}
                       >
-                        <div className="flex items-center gap-3 p-3 bg-white rounded-2xl hover:shadow-md border border-gray-100 transition-all group">
+                        <div className="flex items-center gap-3 p-3 bg-white rounded-2xl hover:shadow-md border border-gray-100 transition-all group relative pr-12">
                           <div className="w-12 h-12 rounded-xl bg-gray-50 flex flex-shrink-0 items-center justify-center overflow-hidden border border-gray-100 shadow-sm">
                             {getFileIcon(file.fileType)}
                           </div>
@@ -446,6 +562,9 @@ export default function App() {
                           </div>
                           <button onClick={() => downloadFile(file)} className="p-2 text-blue-600 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors shrink-0">
                             <Download className="w-5 h-5" />
+                          </button>
+                          <button onClick={() => removeReceivedFile(file.receivedAt)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg transition-colors opacity-100 lg:opacity-0 lg:group-hover:opacity-100 absolute top-2 right-2 bg-white" title="Remove file">
+                            <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </motion.div>
@@ -472,9 +591,7 @@ export default function App() {
   );
   };
 
-  const SendPanel = () => {
-    const [isDragging, setIsDragging] = useState(false);
-
+  const renderSendPanel = () => {
     const handleDragOver = (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(true);
@@ -501,81 +618,122 @@ export default function App() {
       });
 
       setPendingFiles(prev => [...prev, ...validFiles]);
+      setActiveSendTab('files');
     };
 
     const totalToSend = pendingFiles.length + pendingLinks.length + extractUrls(inputText).length;
 
     return (
-      <div className="flex flex-col h-full bg-white rounded-3xl shadow-sm border border-gray-100 p-6 overflow-hidden">
-        <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-6 shrink-0">
+      <div className="flex flex-col w-full h-full min-h-0 bg-white rounded-3xl shadow-sm border border-gray-100 p-5 lg:p-6 overflow-hidden">
+        <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4 shrink-0">
           <Send className="w-6 h-6 text-blue-600" />
           Share Instantly
         </h2>
-        
-        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 flex flex-col space-y-6 mb-4">
-          
-          {/* Dropzone */}
-          <div 
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            className={`border-2 border-dashed rounded-3xl p-8 flex flex-col items-center justify-center text-center transition-all cursor-pointer group shrink-0 ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400 hover:bg-gray-50'}`}
+
+        {/* Custom Tabs */}
+        <div className="flex items-center gap-2 mb-4 shrink-0 p-1 bg-gray-50 rounded-2xl border border-gray-100">
+          <button 
+            onClick={() => setActiveSendTab('files')}
+            className={`flex-1 py-2 px-3 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold transition-all ${
+              activeSendTab === 'files' 
+                ? 'bg-white text-gray-900 shadow-sm' 
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
           >
-            <div className={`w-14 h-14 rounded-full shadow-sm flex items-center justify-center mb-4 transition-transform duration-300 ${isDragging ? 'bg-blue-500 text-white scale-110' : 'bg-white border border-gray-100 text-blue-500 group-hover:scale-110'}`}>
-              <Paperclip className="w-6 h-6" />
+            <Paperclip className="w-4 h-4" />
+            Files
+          </button>
+          <button 
+            onClick={() => setActiveSendTab('links')}
+            className={`flex-1 py-2 px-3 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold transition-all ${
+              activeSendTab === 'links' 
+                ? 'bg-white text-gray-900 shadow-sm' 
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Link className="w-4 h-4" />
+            Links & Text
+          </button>
+        </div>
+
+        <div className="shrink-0 mb-3">
+          {activeSendTab === 'files' && (
+            <div className="shrink-0">
+              {/* Dropzone */}
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center text-center transition-all cursor-pointer group w-full ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400 hover:bg-gray-50'} ${pendingFiles.length > 0 ? 'py-3 flex-row gap-3' : 'p-6'}`}
+              >
+                {pendingFiles.length > 0 ? (
+                  <>
+                    <div className={`w-8 h-8 rounded-full shadow-sm flex items-center justify-center transition-transform duration-300 ${isDragging ? 'bg-blue-500 text-white scale-110' : 'bg-white border border-gray-100 text-blue-500 group-hover:scale-110'}`}>
+                      <Paperclip className="w-4 h-4" />
+                    </div>
+                    <p className="text-sm font-semibold text-gray-800">Add more files</p>
+                  </>
+                ) : (
+                  <>
+                    <div className={`w-12 h-12 rounded-full shadow-sm flex items-center justify-center mb-3 transition-transform duration-300 ${isDragging ? 'bg-blue-500 text-white scale-110' : 'bg-white border border-gray-100 text-blue-500 group-hover:scale-110'}`}>
+                      <Paperclip className="w-5 h-5" />
+                    </div>
+                    <p className="text-sm font-semibold text-gray-800">Choose Files or Drag here</p>
+                    <p className="text-xs font-medium text-gray-500 mt-1">Images, Documents, Videos (Max 100MB)</p>
+                  </>
+                )}
+              </div>
             </div>
-            <p className="text-sm font-semibold text-gray-800">Choose Files or Drag here</p>
-            <p className="text-xs font-medium text-gray-500 mt-1.5">Images, Documents, Videos (Max 100MB)</p>
-          </div>
+          )}
 
-          <div className="relative shrink-0">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
-            <div className="relative flex justify-center"><span className="bg-white px-4 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">or paste links</span></div>
-          </div>
-
-          <div className="shrink-0 flex flex-col gap-2">
-             <textarea 
-               className="w-full min-h-[60px] p-4 bg-gray-50 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none resize-none transition-all text-sm font-medium text-gray-700 placeholder:text-gray-400 placeholder:font-medium"
-               placeholder="Write a message or paste links..."
-               value={inputText}
-               onChange={(e) => {
-                 const newText = e.target.value;
-                 const urls = extractUrls(newText);
-                 if (urls.length > 0 && newText.endsWith(' ')) {
-                   let strippedText = newText;
-                   urls.forEach(url => {
-                      strippedText = strippedText.replace(url, '');
-                   });
-                   setPendingLinks(prev => Array.from(new Set([...prev, ...urls])));
-                   setInputText(strippedText.trim());
-                 } else if (urls.length > 0 && (e.nativeEvent as any).inputType === 'insertFromPaste') {
-                   let strippedText = newText;
-                   urls.forEach(url => {
-                      strippedText = strippedText.replace(url, '');
-                   });
-                   setPendingLinks(prev => Array.from(new Set([...prev, ...urls])));
-                   setInputText(strippedText.trim());
-                 } else {
-                   setInputText(newText);
-                 }
-               }}
-               onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const urls = extractUrls(inputText);
-                    if (urls.length > 0) {
-                      let strippedText = inputText;
-                      urls.forEach(url => {
-                         strippedText = strippedText.replace(url, '');
-                      });
-                      setPendingLinks(prev => Array.from(new Set([...prev, ...urls])));
-                      setInputText(strippedText.trim());
-                      e.preventDefault();
-                    }
+          {activeSendTab === 'links' && (
+            <div className="shrink-0 flex flex-col gap-2">
+               <textarea 
+                 className={`w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none resize-none transition-all text-sm font-medium text-gray-700 placeholder:text-gray-400 placeholder:font-medium ${pendingLinks.length > 0 ? 'min-h-[60px] h-[60px]' : 'min-h-[140px]'}`}
+                 placeholder="Write a message or paste links here..."
+                 value={inputText}
+             onChange={(e) => {
+               const newText = e.target.value;
+               const urls = extractUrls(newText);
+               if (urls.length > 0 && newText.endsWith(' ')) {
+                 let strippedText = newText;
+                 urls.forEach(url => {
+                    strippedText = strippedText.replace(url, '');
+                 });
+                 setPendingLinks(prev => Array.from(new Set([...prev, ...urls])));
+                 setInputText(strippedText.trim());
+               } else if (urls.length > 0 && (e.nativeEvent as any).inputType === 'insertFromPaste') {
+                 let strippedText = newText;
+                 urls.forEach(url => {
+                    strippedText = strippedText.replace(url, '');
+                 });
+                 setPendingLinks(prev => Array.from(new Set([...prev, ...urls])));
+                 setInputText(strippedText.trim());
+               } else {
+                 setInputText(newText);
+               }
+             }}
+             onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const urls = extractUrls(inputText);
+                  if (urls.length > 0) {
+                    let strippedText = inputText;
+                    urls.forEach(url => {
+                       strippedText = strippedText.replace(url, '');
+                    });
+                    setPendingLinks(prev => Array.from(new Set([...prev, ...urls])));
+                    setInputText(strippedText.trim());
+                    e.preventDefault();
                   }
-               }}
-             />
-          </div>
+                }
+             }}
+           />
+        </div>
+        )}
+        </div>
+        
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-5 mb-4 pr-1">
 
           {/* Pending Links List */}
           <AnimatePresence>
@@ -710,11 +868,13 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
 
+        <div className="shrink-0 pt-2 pb-0 mt-auto">
           <button 
             onClick={handleSend}
             disabled={totalToSend === 0 || status !== 'connected'}
-            className={`w-full relative overflow-hidden group flex items-center justify-center py-4 rounded-2xl font-semibold transition-all shadow-md focus:ring-4 outline-none ${
+            className={`w-full relative overflow-hidden group flex items-center justify-center py-3 rounded-xl font-semibold transition-all shadow-md focus:ring-4 outline-none ${
               totalToSend === 0 || status !== 'connected'
                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200 shadow-none hover:bg-gray-100 hover:text-gray-400' 
                 : 'bg-gray-900 text-white hover:shadow-lg focus:ring-gray-200'
@@ -788,10 +948,10 @@ export default function App() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 10 }}
                 transition={{ duration: 0.2 }}
-                className="absolute inset-0 p-4 pb-24 overflow-hidden"
+                className="absolute inset-0 p-4 pb-24 overflow-hidden flex flex-col"
               >
-                <div className="h-full max-h-full">
-                  <SendPanel />
+                <div className="w-full h-full flex flex-col min-h-0">
+                  {renderSendPanel()}
                 </div>
               </motion.div>
             ) : (
@@ -801,10 +961,10 @@ export default function App() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
                 transition={{ duration: 0.2 }}
-                className="absolute inset-0 p-4 pb-24 overflow-hidden"
+                className="absolute inset-0 p-4 pb-24 overflow-hidden flex flex-col"
               >
-                <div className="h-full max-h-full">
-                 <TabList />
+                <div className="w-full h-full flex flex-col min-h-0">
+                 {renderTabList()}
                 </div>
               </motion.div>
             )}
@@ -949,13 +1109,13 @@ export default function App() {
           ) : (
             <motion.div 
               initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-              className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch w-full max-w-4xl mx-auto flex-1 min-h-0 pb-2 overflow-hidden"
+              className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6 items-stretch w-full max-w-5xl mx-auto flex-1 min-h-0 pb-2 overflow-hidden"
             >
               <div className="flex flex-col h-full min-h-0 overflow-hidden">
-                <SendPanel />
+                {renderSendPanel()}
               </div>
               <div className="flex flex-col h-full min-h-0 overflow-hidden">
-                <TabList />
+                {renderTabList()}
               </div>
             </motion.div>
           )}
